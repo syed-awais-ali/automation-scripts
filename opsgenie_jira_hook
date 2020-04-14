@@ -1,6 +1,4 @@
 """
-There is a AWS lambda fucntion with the name of opsGenieJiraIntegration
-which calls og_jira_integration.issue_handler and executes the operations.
 We needed this to keep track of P4/P5 alerts that often went un-noticed.
 This script is meant to track if there is not already a ticket for corresponding
 alert then it will make one and if there is already a ticket for an alert
