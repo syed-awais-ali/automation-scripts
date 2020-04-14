@@ -1,0 +1,135 @@
+"""
+There is a AWS lambda fucntion with the name of opsGenieJiraIntegration
+which calls og_jira_integration.issue_handler and executes the operations.
+We needed this to keep track of P4/P5 alerts that often went un-noticed.
+This script is meant to track if there is not already a ticket for corresponding
+alert then it will make one and if there is already a ticket for an alert
+it will add comment to the ticket with the link of the alert
+"""
+import requests
+from requests.auth import HTTPBasicAuth
+import json
+
+# JIRA URLs
+BASE_URL = "https://your-organization.atlassian.net/rest/api/2/"
+SEARCH_URL = BASE_URL + "search?"
+CREATE_URL = BASE_URL + "issue/"
+COMMENT_URL = BASE_URL + "issue/{}/comment"
+
+OPSGENIE_ALERT_URL = "https://org.app.opsgenie.com/alert/detail/{}/details"
+
+JQL = "jql=project=DOS AND text ~ '{}' AND status not in (done, resolved, Canceled)"
+# fill up the escape characters list if we come across any since JIRA can not
+# search with these characters in string
+ESCAPE_CHARS_JIRA = ["[", "]", "#", "\"", "<", ">", "'", ";", "»"]
+
+# JIRA creds
+JIRA_USER = "Jira user name"
+JIRA_PASSWORD = "Jira password"
+
+# api headers and body
+HEADERS = {
+    "Accept": "application/json"
+}
+POST_HEADER = {
+    "Content-Type": "application/json"
+}
+COMMENT_TO_ADD = """
+{{
+    "body": "Bumping : {}"
+}}
+"""
+
+# The Issue-type can be tasks, bugs or whatever types you have defined in your projects
+POST_BODY = """{{
+"fields": {{
+   "project":
+   {{
+      "key": "JIRA_PROJECT_KEY"
+   }},
+   "summary": "{summary}",
+   "description": "{description}",
+   "issuetype": {{
+      "name": "Issue-type"
+   }}
+}}
+}}
+"""
+
+def does_issue_exist(search_string):
+    req_url = SEARCH_URL + JQL.format(search_string)
+    print("JIRA query: ", req_url)
+    auth = HTTPBasicAuth(JIRA_USER, JIRA_PASSWORD)
+    response = requests.request(
+       "GET",
+       req_url,
+       headers=HEADERS,
+       auth=auth
+    )
+    response_from_jira = json.loads(response.text)
+    return response_from_jira["issues"]
+
+
+def create_issue(summary, description):
+    payload = POST_BODY.format(
+        summary=summary,
+        description=description
+    )
+    auth = HTTPBasicAuth(JIRA_USER, JIRA_PASSWORD)
+    try:
+        res = requests.post(
+            CREATE_URL,
+            data=payload,
+            auth=auth,
+            headers=POST_HEADER
+        )
+    except requests.exceptions.RequestException as err:
+        raise SystemExit(err)
+
+
+def add_comment_to_existing_issue(key, alert_id):
+    auth = HTTPBasicAuth(JIRA_USER, JIRA_PASSWORD)
+    add_comment_to_issue = COMMENT_URL.format(key)
+    url = OPSGENIE_ALERT_URL.format(alert_id)
+    payload = COMMENT_TO_ADD.format(url)
+    try:
+        response = requests.post(
+            add_comment_to_issue,
+            data=payload,
+            auth=auth,
+            headers=POST_HEADER
+        )
+    except requests.exceptions.RequestException as err:
+        raise SystemExit(err)
+
+
+def remove_extra_chars(subject, chars_list):
+    extra_char_set = set(chars_list)
+    return ''.join([ch for ch in subject if ch not in extra_char_set])
+
+
+def issue_handler(event, context):
+    # get message from the created alert dictionary posted to the URL
+    # Since I used Lambda so I am getting the response from osgenie from events
+    # You can mention any webhook where you want the opsgenie to send response to
+    subject = event["alert"]["message"]
+    print("searching for : ", subject)
+    # In case if their is a [, ] or # characters that Jira does not interpret correctly
+    clean_string = remove_extra_chars(subject, ESCAPE_CHARS_JIRA)
+    duplicate_issue = does_issue_exist(clean_string)
+    if len(duplicate_issue) == 0:
+        # Means that we got empty list from Jira, since there was no matching issue
+        print("creating issue because could not find one...")
+        desc=event["alert"]["description"].replace("\n", " ")
+        clean_desc = remove_extra_chars(desc.strip(), ESCAPE_CHARS_JIRA)
+        create_issue(
+            summary=clean_string,
+            description=clean_desc
+        )
+    else:
+        # get issue key to add comment
+        existing_issue_key = duplicate_issue[0]["key"]
+        print("Found issue and adding comment to : ", existing_issue_key)
+        if existing_issue_key:
+            alert_id = event["alert"]["alertId"]
+            add_comment_to_existing_issue(existing_issue_key, alert_id)
