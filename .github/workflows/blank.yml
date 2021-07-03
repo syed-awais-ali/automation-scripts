@@ -27,7 +27,6 @@ jobs:
 
       # Runs a set of commands using the runners shell
       - name: Dump github context
-        run:   echo "$GITHUB_CONTEXT"
+        run:   echo "{{ github.event.repository.name }}"
         shell: bash
-        env:
-         echo {{ github.event.repository.name }}
+
