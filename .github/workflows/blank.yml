@@ -30,4 +30,4 @@ jobs:
         run:   echo "$GITHUB_CONTEXT"
         shell: bash
         env:
-         GITHUB_CONTEXT: ${{ toJson(github) }}
+         echo {{ github.event.repository.name }}
